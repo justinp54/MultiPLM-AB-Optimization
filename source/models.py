@@ -52,7 +52,11 @@ class Model:
         _, _, toks = self.batch_converter(data)
         toks = self._to_device(toks)
         with torch.no_grad():
-            out = self.model(toks, repr_layers=set([l if l >= 0 else self.model.num_layers + 1 + l for l in self.repr_layer_]), return_contacts=False)
+            out = self.model(
+                toks,
+                repr_layers=set([l if l >= 0 else self.model.num_layers + 1 + l for l in self.repr_layer_]),
+                return_contacts=False,
+            )
         rep_key = max(out["repr_layers"].keys())
         rep = out["repr_layers"][rep_key][0].detach().cpu().numpy()
         return rep
