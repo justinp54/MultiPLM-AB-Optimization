@@ -13,6 +13,9 @@ def _resolve(name):
         "esm1v3": "esm1v_t33_650M_UR90S_3",
         "esm1v4": "esm1v_t33_650M_UR90S_4",
         "esm1v5": "esm1v_t33_650M_UR90S_5",
+        "esm2_650M": "esm2_t33_650M_UR50D",
+        "esm2_3B": "esm2_t36_3B_UR50D",
+        "esm2_15B": "esm2_t48_15B_UR50D",
     }
     return m.get(name, name)
 
@@ -57,8 +60,18 @@ class Model:
                 repr_layers=set([l if l >= 0 else self.model.num_layers + 1 + l for l in self.repr_layer_]),
                 return_contacts=False,
             )
-        rep_key = max(out["repr_layers"].keys())
-        rep = out["repr_layers"][rep_key][0].detach().cpu().numpy()
+        if "repr_layers" in out:
+            reps = out["repr_layers"]
+        elif "representations" in out:
+            reps = out["representations"]
+        else:
+            raise KeyError(
+                "No representations found in model output. "
+                "Check that repr_layers was set correctly and esm version is compatible."
+            )
+
+        rep_key = max(reps.keys())
+        rep = reps[rep_key][0].detach().cpu().numpy()
         return rep
 
     def logits(self, seq):
