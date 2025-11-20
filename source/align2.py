@@ -32,6 +32,10 @@ def build_key(numbering): # numbering = list of tuples(resseq, icode)
     mp = {}
     for i, (resseq, icode) in enumerate(numbering, start=1):
         key = str(resseq) + (icode if icode else "")
+        if key in mp:
+            print("duplicate key:", key, "old idx:", mp[key], "new idx:", i)
+            continue
+        
         mp[key] = i
     return mp
 
