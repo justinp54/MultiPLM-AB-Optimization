@@ -60,6 +60,35 @@ class ESMRegressor(nn.Module):
         out = self.net(x)
         return out
 
+class ImprovedESMRegressor(nn.Module):
+    def __init__(self, input_dim, hidden_dim = 512, dropout = 0.1):
+        super().__init__()
+        
+        self.input = nn.Linear(input_dim, hidden_dim)
+        
+        self.layer1 = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+        self.layer2 = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+        
+        self.output = nn.Linear(hidden_dim, 1)
+    def forward(self,x):
+        h = self.input(x)
+        h = h+self.layer1(h)
+        h = h+self.layer2(h)
+        out = self.output(h)
+        return out
+
 def build_seq_cache(df: pd.DataFrame, pdb_root = "../data/DMS_big_table_PDB_files"):
     seq_cache = {}
     
@@ -183,7 +212,7 @@ def build_wt_only_features(df: pd.DataFrame, seq_cache, models, device: torch.de
     
     return X, y, pdb_ids
 
-def train_dms_regressor(X: np.ndarray, y: np.ndarray, pdb_ids: np.ndarray, n_epochs = 20, batch_size = 512, lr = 3e-4, weight_decay = 1e-5):
+def train_dms_regressor(X: np.ndarray, y: np.ndarray, pdb_ids: np.ndarray,model_class, model_name :str, n_epochs = 20, batch_size = 512, lr = 3e-4, weight_decay = 1e-5):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     unique_pdbs = np.unique(pdb_ids)
@@ -210,9 +239,13 @@ def train_dms_regressor(X: np.ndarray, y: np.ndarray, pdb_ids: np.ndarray, n_epo
     valid_loader = DataLoader(valid_dataset, batch_size = batch_size, shuffle = False)
     test_loader = DataLoader(test_dataset, batch_size = batch_size, shuffle = False)
     
-    model = ESMRegressor(input_dim = X.shape[1]).to(device)
+    model = model_class(input_dim = X.shape[1]).to(device)
     optimizer = optim.AdamW(model.parameters(), lr = lr, weight_decay = weight_decay)
     criterion = nn.MSELoss()
+    
+    exp_name = f"{model_name}_ep{n_epochs}_bs{batch_size}_lr{lr}"
+    print("Starting training for experiment:", exp_name)
+    
     
     for epoch in range(n_epochs):
         model.train()
@@ -252,8 +285,19 @@ def train_dms_regressor(X: np.ndarray, y: np.ndarray, pdb_ids: np.ndarray, n_epo
             pred = model(x)
             y_true.extend(y.numpy().flatten().tolist())
             y_pred.extend(pred.cpu().numpy().flatten().tolist())
-        evaluate(np.array(y_true), np.array(y_pred))
-    return model
+        metrics = evaluate(np.array(y_true), np.array(y_pred))
+        results = {
+            "model_name": model_name,
+            "n_epochs": n_epochs,
+            "batch_size": batch_size,
+            "lr": lr,
+            "weight_decay": weight_decay,
+            "n_train": len(train_dataset),
+            "n_valid": len(valid_dataset),
+            "n_test": len(test_dataset),
+            "metrics": metrics,
+        }
+    return model, results
 
 def evaluate(y_true, y_pred):
     r2 = r2_score(y_true, y_pred)
@@ -264,12 +308,19 @@ def evaluate(y_true, y_pred):
     
     print("Evaluation Results:")
     print(f"R2: {r2:.4f}, MSE: {mse:.4f}, MAE: {mae:.4f}, Pearson r: {pearson_r:.4f}, Spearman rho: {spearman_rho:.4f}")
+    return {
+        "R2": r2,
+        "MSE": mse,
+        "MAE": mae,
+        "Pearson_r": pearson_r,
+        "Spearman_rho": spearman_rho,
+    }
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dms_csv", type=str, required=False, help="Path to DMS CSV file", default="../data/Abagym_mutation_full_dataset.csv")
     parser.add_argument("--pdb_root", type=str, required=False, help="Path to PDB files root directory",default="../data/DMS_big_table_PDB_files")
-    parser.add_argument("--models", type=str, nargs="+", default=["esm2_650M"], help="List of PLM model names to use")
+    parser.add_argument("--models", type=str, nargs="+", default=["esm2_650M","esm2_3B"], help="List of PLM model names to use")
     parser.add_argument("--n_epochs", type=int, default=20, help="Number of training epochs")
     batch_size = parser.add_argument("--batch_size", type=int, default=512, help="Training batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
@@ -290,8 +341,11 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     X, y,pdb_ids = build_wt_only_features(df, seq_cache, plm_models, device)
     
-    model = train_dms_regressor(X, y, pdb_ids, n_epochs = args.n_epochs, batch_size = args.batch_size, lr = args.lr, weight_decay = args.weight_decay)
+    baseline_model, baseline_result = train_dms_regressor(X, y, pdb_ids, ESMRegressor, "Baseline_regressor", n_epochs = args.n_epochs, batch_size = args.batch_size, lr = args.lr, weight_decay = args.weight_decay)
+    improved_model, improved_result = train_dms_regressor(X, y, pdb_ids, ImprovedESMRegressor, "Improved_regressor", n_epochs = args.n_epochs, batch_size = args.batch_size, lr = args.lr, weight_decay = args.weight_decay)
     print("Training completed.")
+    print("Baseline:", baseline_result["metrics"])
+    print("Improved:", improved_result["metrics"])
     
 if __name__ == "__main__":
     main()
